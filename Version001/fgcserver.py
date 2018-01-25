@@ -1,7 +1,9 @@
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, send
+import paho.mqtt.publish as publish
 from copy import deepcopy
 from threading import Lock
+import multiprocessing
 import json
 import os
 import time
@@ -51,13 +53,10 @@ zoneNames = {
 # We will keep the data for all the zones here.
 allZonesData = {}
 
-
-#app = Flask (__name__ )
-#socketio = SocketIO (app)
-#thread = None
-#zoneDataLock = Lock ()
-
-
+# MQTT work is done in another process so we use 2 queues to pass the MQTT
+# data to and from the process
+mqttPublishQueue = multiprocessing.Queue ()
+mqttSubscribeQueue = multiprocessing.Queue ()
 
 ################################################################################
 #
@@ -388,6 +387,43 @@ def checkZonesThread ():
                 # checkTimedZone function.
                 checkTimedZone (allZonesData [zoneNumber])
 
+################################################################################
+#
+# Function: mqttProcess()
+#
+# Parameters:
+#
+# Returns:
+#
+# Globals modified:
+#
+# Comments: 
+#
+################################################################################
+
+def mqttProcess (mqttPublishData, mqttSubscribeData) :
+    print "MQTT PROCESS STARTED"
+    if not mqttPublishData.empty () : 
+        publishData = mqttPublishData.get ()
+        publish.single("hello/world/mk2018", json.dumps(publishData), hostname="192.168.0.244")
+
+        print publishData
+
+
+################################################################################
+#
+# Function: sendConsoleMessage (message)
+#
+# Parameters:
+#
+# Returns:
+#
+# Globals modified:
+#
+# Comments: Helper function that enables us to send a nessage to the browser
+# that will be displayed with console.log.
+#
+################################################################################
 
 def sendConsoleMessage (message) :
     send (json.dumps ({"command":"console_message", "payload":message}))
@@ -455,6 +491,11 @@ def hello():
     return render_template("fgcserver.html")
  
 if __name__ == "__main__":
+
+    p = multiprocessing.Process(target = mqttProcess, args = (mqttPublishQueue, mqttSubscribeQueue,))
+    p.start()
+    mqttPublishQueue.put ({"zone":0})
+
     # Read all the zone files into allZonesData. 
     loadZones ()
     # When we have all the zone data start task to check zone operation.

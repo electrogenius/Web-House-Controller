@@ -1,16 +1,28 @@
 import time
 import json
+import socket
 import paho.mqtt.client as mqttClient
-#import RPi.GPIO as GPIO
 
-#/GPIO.setmode(GPIO.BCM)
-#GPIO.setup(18, GPIO.OUT)
-#GPIO.setup(23, GPIO.OUT)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(('4.2.2.1', 0))
+#ourIp = s.getsockname()[0]
+#ourIp = socket.gethostbyname(socket.gethostname())
+isRpi = s.getsockname()[0] == "192.168.0.243"
+print isRpi
+if isRpi:
+    import RPi.GPIO as GPIO
+
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(18, GPIO.OUT)
+    GPIO.setup(23, GPIO.OUT)
+    id = "RPI"
+else:
+    id = "WIN"
 
 def on_connect(client, userdata, flags, rc):
  
     if rc == 0:
-        print("Connected to broker from pi")
+        print("Connected to broker from "+id)
         client.subscribe("hello/world/mk2018") 
     else:
         print("Connection failed")
@@ -22,14 +34,14 @@ def on_message(client, userdata, message):
 
     if restoredData["zone"] == 0:
         print ("ON")
-       # GPIO.output (23,0)
+        if isRpi: GPIO.output (23,0)
     else:
         print ("OFF")
-       # GPIO.output (23,1)
+        if isRpi: GPIO.output (23,1)
 
-brokerAddress = "192.168.0.52"  
+brokerAddress = "192.168.0.244"  
  
-client = mqttClient.Client("WIN")               #create new instance
+client = mqttClient.Client(id)               #create new instance
 client.on_connect = on_connect
 client.on_message= on_message
 client.connect(brokerAddress) 
