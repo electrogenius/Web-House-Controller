@@ -1458,7 +1458,7 @@ $(document).ready(function (){
                 &&
                 (zoneData.next_on_time != zoneData.next_off_time)) {
                 
-                // Are we 'on' or are we 'suspended'?
+                // Are we actually'on' or are we 'suspended'?
                 if (zoneData.zone_state == "on") {
                     // We are 'on' so set 'suspend' key active.
                     replaceKey ("key15", "suspend_key");

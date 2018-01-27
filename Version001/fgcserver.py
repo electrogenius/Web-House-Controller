@@ -54,15 +54,17 @@ zoneNames = {
 allZonesData = {}
 
 # MQTT work is done in another process so we use 2 queues to pass the MQTT
-# data to and from the process
+# data to and from the process.
 mqttPublishQueue = multiprocessing.Queue ()
 mqttSubscribeQueue = multiprocessing.Queue ()
+mqttBroker = "192.168.0.244"
+mqttZoneTopic = "zone/control/state"
 
 ################################################################################
 #
-# Function: checkTimedZone ()
+# Function: checkTimedZone (zoneData)
 #
-# Parameters:
+# Parameters: zoneData - data for the zone to check.
 #
 # Returns:
 #
@@ -89,7 +91,6 @@ def checkTimedZone (zoneData):
         # Add the number of days from now and return to caller.
         return time.mktime (nextTime) + dayAdvance
     
-
     # Get current time in the text format that we use for timers.
     localTime = time.localtime (time.time ())
     currentTime = str (localTime.tm_hour ).zfill(2) + ":" + str (localTime.tm_min).zfill(2)
@@ -100,14 +101,14 @@ def checkTimedZone (zoneData):
     
     # Is timer mode active and are there any timers for this zone?
     # Note: mode may be "suspended" which can only occur if we were on and in
-    # "timer" mode.
+    # "timer" mode. 
     if mode in ("timer", "suspended") and numberOfTimers > 0:
 
-        # Clear active timer flag and next times. Set zone off.
+        # Clear active timer flag and next times.
         zoneData ["timer_active"] = 0  
         zoneData ["next_on_time"] = 0
         zoneData ["next_off_time"] = 0    
-        zoneData ["zone_state"] = "off"
+        #zoneData ["zone_state"] = "off"
         
         # Make a list of all the timers that are valid and enabled for this zone.
         # Valid timers have an on time before off time and at least 1 day set.
@@ -232,7 +233,8 @@ def checkTimedZone (zoneData):
             # Get current day.
             dayOfWeek = localTime.tm_wday
 
-            # Try each day. Exit if we find no days.
+            # Try each day. Exit if we find no days. We will know this if
+            # dayAdvance gets to 7 days worth of seconds.
             while dayAdvance < 86400 * 7 :
                 # Move to next day. Wrap if we move past Sunday (6).
                 dayOfWeek = dayOfWeek + 1 if dayOfWeek < 6 else 0
@@ -252,44 +254,41 @@ def checkTimedZone (zoneData):
                         dayAdvance = 86400 * 7
                         # Got an on time so leave.   
                         break
-                    
+        
     # Now we are finished with a zone we exit. Because we were passed zoneData by
     # reference we have updated the original data.
     return zoneData
 
-
 ################################################################################
 #
-# Function: checkForBoostZones ()
+# Function: checkBoostZone (zoneData)
 #
-# Parameters:
+# Parameters: zoneData
 #
 # Returns:
 #
-# Globals modified:
+# Globals modified: allZonesData
 #
 # Comments: 
 #
 ################################################################################
 
-def checkForBoostZones ():
+def checkBoostZone (zoneData):
     
     # Get current time and day in the UTC format that we use for until time.
     currentTime = time.time ()
 
-    # Check each zone.
-    for zoneNumber in allZonesData :
-        zoneMode = allZonesData [zoneNumber]["mode"]
-        # Is boost active?
-        if zoneMode [0:6] == "boost_" :
-            # Boost is active. Get boost end for this zone.
-            boostEnd = allZonesData [zoneNumber]["boost_off_time"]
-            # Do we have a boost end time match?
-            if (currentTime >= boostEnd):
-                # Boost is finished so clear boost mode by removing "boost_"
-                # from mode string.
-                allZonesData [zoneNumber]["mode"] = zoneMode [6:]
-
+    zoneMode = zoneData["mode"]
+    # Is boost active?
+    if zoneMode [0:6] == "boost_" :
+        # Are we in boost time? We work in utc format for boost.
+        if (currentTime < zoneData["boost_off_time"]):
+            # Set zone on.
+            zoneData ["zone_state"] = "on"
+        else:
+            # Boost is finished so clear boost mode by removing "boost_"
+            # from mode string.
+            zoneData["mode"] = zoneMode [6:]
 
 ################################################################################
 #
@@ -312,11 +311,10 @@ def sendZoneStates ():
     # Scan through each zone and save the state (on or off).
     for zoneNumber in allZonesData :
         zoneStates [zoneNumber] = {"zone_state":allZonesData [zoneNumber]["zone_state"],
-                                   "last_zone_state":allZonesData [zoneNumber]["zone_state"]}
+                                   "last_zone_state":allZonesData [zoneNumber]["last_zone_state"]}
 
     # Now send to client.
     send (json.dumps ({"command":"zone_states", "payload":zoneStates}))
-
 
 ################################################################################
 #
@@ -357,7 +355,6 @@ def loadZones ():
             allZonesData [zoneNumber] = json.loads (zoneFile.read ())
             zoneFile.close ()
             
-
 ################################################################################
 #
 # Function: checkZonesThread ()
@@ -379,14 +376,25 @@ def checkZonesThread ():
         socketio.sleep (1)
         # We mustn't alter data if other thread is using it.
         with zoneDataLock :
-            #  We check boost 1st as it overrides timers.
-            checkForBoostZones ()
-            # Now check for timed zones.
+            # Now check zones.
             for zoneNumber in allZonesData :
+                # Clear the existing state. If will be set on again if boost
+                # or a timer is active.
+                allZonesData [zoneNumber]["zone_state"] = "off"
                 # Note allZonesData passed by reference so it is modified by
-                # checkTimedZone function.
+                # checkTimedZone and checkBoostZone functions.
+                # We check boost 1st as it overrides timers.
+                checkBoostZone (allZonesData [zoneNumber])
                 checkTimedZone (allZonesData [zoneNumber])
 
+                # Now we check if the zone has changed state and if it has we send an
+                # mqtt message to the zone controller.
+                newState =  allZonesData [zoneNumber]["zone_state"]
+                if allZonesData [zoneNumber]["last_zone_state"] != newState :
+                    allZonesData [zoneNumber]["last_zone_state"] = newState
+                    print "CHANGE", json.dumps ({zoneNumber:newState})
+                    publish.single (mqttZoneTopic, json.dumps ({zoneNumber:newState}), hostname=mqttBroker)
+           
 ################################################################################
 #
 # Function: mqttProcess()
@@ -404,8 +412,8 @@ def checkZonesThread ():
 def mqttProcess (mqttPublishData, mqttSubscribeData) :
     print "MQTT PROCESS STARTED"
     if not mqttPublishData.empty () : 
-        publishData = mqttPublishData.get ()
-        publish.single("hello/world/mk2018", json.dumps(publishData), hostname="192.168.0.244")
+        publishData = json.dumps (mqttPublishData.get ())
+        publish.single (mqttZoneTopic, publishData, hostname=mqttBroker)
 
         print publishData
 
@@ -494,7 +502,7 @@ if __name__ == "__main__":
 
     p = multiprocessing.Process(target = mqttProcess, args = (mqttPublishQueue, mqttSubscribeQueue,))
     p.start()
-    mqttPublishQueue.put ({"zone":0})
+    #mqttPublishQueue.put ({"zone":"on"})
 
     # Read all the zone files into allZonesData. 
     loadZones ()

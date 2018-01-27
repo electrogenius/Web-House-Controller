@@ -23,7 +23,7 @@ def on_connect(client, userdata, flags, rc):
  
     if rc == 0:
         print("Connected to broker from "+id)
-        client.subscribe("hello/world/mk2018") 
+        client.subscribe("zone/control/state") 
     else:
         print("Connection failed")
  
@@ -32,7 +32,7 @@ def on_message(client, userdata, message):
     restoredData = json.loads (message.payload)
     print 'Restored:',restoredData
 
-    if restoredData["zone"] == 0:
+    if restoredData["zone"] == "on":
         print ("ON")
         if isRpi: GPIO.output (23,0)
     else:

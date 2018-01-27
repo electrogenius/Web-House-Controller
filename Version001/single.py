@@ -1,2 +1,2 @@
 import paho.mqtt.publish as publish
-publish.single("hello/world/mk2018", '{"zone":0}', hostname="192.168.0.244")
+publish.single("zone/control/state", '{"zone":"on"}', hostname="192.168.0.244")
